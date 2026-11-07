@@ -24,7 +24,7 @@ func TestConsoleServesHTML(t *testing.T) {
 	rec := httptest.NewRecorder()
 	Handler(rec, req)
 	body := rec.Body.String()
-	for _, marker := range []string{"v1/submissions", "X-BitFSCollector-Signature", "cc-cli", "sigVersion", "archiveId"} {
+	for _, marker := range []string{"v1/submissions", "X-BitFSCollector-Signature", "cc-cli", "SigVersion", "archiveId"} {
 		if !strings.Contains(body, marker) {
 			t.Fatalf("console page missing %q", marker)
 		}
