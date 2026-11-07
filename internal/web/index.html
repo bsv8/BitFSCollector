@@ -56,7 +56,7 @@
       <code id="submit-url">…</code>
       <button class="primary" id="copy-url">复制提交 URL</button>
     </div>
-    <p style="font-size:13px">上面是按你当前访问域名自动拼出的提交地址，cc／cc-cli 的采集地址就填它（去掉 <code class="inline">/v1/submissions</code> 的部分）。</p>
+    <p style="font-size:13px">上面是按你当前访问域名自动拼出的完整提交地址（含 path），cc／cc-cli 的采集地址直接填它，不用去掉 <code class="inline">/v1/submissions</code>。</p>
   </header>
 
   <section class="card">
@@ -111,7 +111,7 @@
   -H "X-BitFSCollector-Signature: $SIG_DER_HEX" \
   -H "X-BitFSCollector-SigVersion: 1" \
   --data-binary @batch.json.gz</code></pre>
-    <div class="note">重试必须原样重发同一份 gzip 与签名，不要重新压缩；<code class="inline">$BASE_URL</code> 取本页顶部的提交 URL 去掉 <code class="inline">/v1/submissions</code> 的部分。</div>
+    <div class="note">重试必须原样重发同一份 gzip 与签名，不要重新压缩；<code class="inline">$BASE_URL</code> 即本页顶部的完整提交 URL（示例已自动替换，复制即用）。只填基地址的旧配置仍然可用（自动补默认路径）。</div>
   </section>
 
   <section class="card">
@@ -145,7 +145,7 @@ const receipt = await c.submit(endpoint, gzip,
   <section class="card">
     <h2>4 · cc 配置</h2>
     <table>
-      <tr><th>采集地址</th><td>钱包 → 本地文件设置 → 采集上报，填本页顶部的基地址（https 开头也行）</td></tr>
+      <tr><th>采集地址</th><td>钱包 → 本地文件设置 → 采集上报，直接填本页顶部的完整提交 URL</td></tr>
       <tr><th>启用开关</th><td>同一分区；首次启用会自动补齐已有完整文件</td></tr>
       <tr><th>提交状态</th><td>同一分区：待提交条数、发送中、最近成功／失败</td></tr>
       <tr><th>介绍编辑</th><td>桶存储文件 → 编辑：改名或改介绍会触发重新提交</td></tr>
@@ -160,7 +160,7 @@ const receipt = await c.submit(endpoint, gzip,
   "server": {
     "collector": {
       "enabled": true,
-      "endpoint": "https://你的域名（本页顶部基地址）"
+      "endpoint": "本页顶部的完整提交 URL（含 path，直接填）"
     }
   }
 }</code></pre>

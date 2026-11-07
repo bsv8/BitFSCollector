@@ -125,8 +125,15 @@ func TestArchiveLayoutAndBytes(t *testing.T) {
 	if len(entries) != 4 {
 		t.Fatalf("expected 4 files, got %d", len(entries))
 	}
-	// Go SDK 客户端同样能走通。
+	// Go SDK 客户端同样能走通，完整 URL（含路径）亦可。
 	receipt, err := collector.Submit(context.Background(), server.Client(), server.URL, gzipBytes, sig, pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.ArchiveID == "" {
+		t.Fatalf("bad receipt %+v", receipt)
+	}
+	receipt, err = collector.Submit(context.Background(), server.Client(), server.URL+collector.SubmissionsPath, gzipBytes, sig, pub)
 	if err != nil {
 		t.Fatal(err)
 	}
