@@ -14,6 +14,7 @@ import (
 
 	"github.com/bsv8/BitFSCollector/internal/archive"
 	"github.com/bsv8/BitFSCollector/internal/config"
+	"github.com/bsv8/BitFSCollector/internal/web"
 	collector "github.com/bsv8/BitFSCollectorProtocol/collector"
 )
 
@@ -43,6 +44,8 @@ func run() error {
 		}
 		store.Handle(w, r)
 	})
+	// 内置文档控制台：GET / 返回展示页，不影响提交接口。
+	mux.HandleFunc("/", web.Handler)
 	server := &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           mux,

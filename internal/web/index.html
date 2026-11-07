@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BitFSCollector · 采集接收控制台</title>
+<style>
+  :root {
+    --bg: #0f1420; --panel: #171e2e; --panel2: #1e2740; --line: #2a3552;
+    --text: #e8edf7; --muted: #9aa6c2; --accent: #6ea8fe; --accent2: #8ee3c0;
+    --warn: #f2c879; --bad: #f28e8e; --code: #0b0f1a; --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: radial-gradient(1200px 600px at 80% -10%, #1c2a52 0%, var(--bg) 55%) fixed, var(--bg);
+    color: var(--text); font: 15px/1.65 -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 40px 20px 80px; }
+  header.hero { background: linear-gradient(135deg, var(--panel), var(--panel2)); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 28px 30px; margin-bottom: 22px; }
+  header.hero h1 { margin: 0 0 6px; font-size: 26px; letter-spacing: .5px; }
+  header.hero h1 .dot { color: var(--accent2); }
+  header.hero p { margin: 4px 0; color: var(--muted); }
+  .urlbar { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; align-items: stretch; }
+  .urlbar code { flex: 1 1 auto; background: var(--code); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 14px; font-size: 15px; color: var(--accent2); overflow-x: auto; white-space: nowrap; }
+  button { cursor: pointer; border: 1px solid var(--line); background: var(--panel2); color: var(--text);
+    border-radius: 10px; padding: 10px 16px; font-size: 14px; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #0b1020; font-weight: 700; }
+  section.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 22px 24px; margin-bottom: 18px; }
+  section.card h2 { margin: 0 0 10px; font-size: 19px; }
+  section.card h3 { margin: 18px 0 8px; font-size: 15px; color: var(--accent); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; white-space: nowrap; }
+  code.inline { background: var(--code); border: 1px solid var(--line); border-radius: 6px; padding: 1px 7px;
+    font-size: 13px; color: var(--accent2); }
+  pre { position: relative; background: var(--code); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 16px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre button.copy { position: absolute; top: 8px; right: 8px; padding: 4px 10px; font-size: 12px; opacity: .8; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } }
+  .note { border-left: 3px solid var(--warn); padding: 2px 0 2px 12px; color: var(--muted); margin: 10px 0; }
+  .ok { color: var(--accent2); } .err { color: var(--bad); }
+  footer { color: var(--muted); font-size: 13px; text-align: center; margin-top: 30px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <h1>BitFSCollector <span class="dot">●</span> 采集接收控制台</h1>
+    <p>接收、验签、原样归档采集提交。不解压、不解析文件元数据、不去重、不建索引。</p>
+    <div class="urlbar">
+      <code id="submit-url">…</code>
+      <button class="primary" id="copy-url">复制提交 URL</button>
+    </div>
+    <p style="font-size:13px">上面是按你当前访问域名自动拼出的提交地址，cc／cc-cli 的采集地址就填它（去掉 <code class="inline">/v1/submissions</code> 的部分）。</p>
+  </header>
+
+  <section class="card">
+    <h2>1 · 提交接口</h2>
+    <table>
+      <tr><th>方法与路径</th><td><code class="inline">POST /v1/submissions</code></td></tr>
+      <tr><th>请求体</th><td>gzip 原始字节（<code class="inline">Content-Type: application/gzip</code>），解压后为规范 JSON 批量记录</td></tr>
+      <tr><th><code class="inline">X-BitFSCollector-Pubkey</code></th><td>33 字节压缩 secp256k1 公钥，小写 hex（66 字符）</td></tr>
+      <tr><th><code class="inline">X-BitFSCollector-Signature</code></th><td>low-S DER 签名，小写 hex</td></tr>
+      <tr><th><code class="inline">X-BitFSCollector-SigVersion</code></th><td>固定 <code class="inline">1</code></td></tr>
+    </table>
+    <h3>成功（200）</h3>
+    <pre><button class="copy">复制</button><code>{
+  "version": 1,
+  "archiveId": "…",
+  "receivedAt": "2026-11-07T06:39:10Z",
+  "pubkeyHex": "…",
+  "digestHex": "…",
+  "bytes": "258"
+}</code></pre>
+    <h3>失败</h3>
+    <table>
+      <tr><th>400 / 413</th><td><code class="inline">invalid_request</code>：请求头、请求体非法或超限（413 不自动拆批）</td></tr>
+      <tr><th>401</th><td><code class="inline">unauthorized</code>：验签失败，不进入归档</td></tr>
+      <tr><th>429</th><td><code class="inline">rate_limited</code>：可按退避重试</td></tr>
+      <tr><th>500</th><td><code class="inline">storage_failed</code>：落盘失败，客户端不得标记成功</td></tr>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>2 · 记录格式与签名</h2>
+    <p>gzip 解压后是这样的规范 JSON（键顺序固定、无空白、按 <code class="inline">seedHashHex</code> 排序；服务端不解析，只验签名）：</p>
+    <pre><button class="copy">复制</button><code>{
+  "version": 1,
+  "files": [
+    {
+      "seedHashHex": "…64位小写hex…",
+      "fileName": "example.pdf",
+      "description": "",
+      "fileSizeBytes": "123456",
+      "mediaType": "application/pdf"
+    }
+  ]
+}</code></pre>
+    <div class="note">文件身份只认 <code class="inline">seedHashHex</code>；长度用十进制字符串；名称、介绍变化触发重新提交，仅长度／MIME 变化不触发。</div>
+    <h3>签名算法</h3>
+    <p>摘要 <code class="inline">= SHA-256("BitFSCollector/submission-v1\n" + gzip原始字节)</code>，域前缀防止 BitFS wire 签名跨协议重放；secp256k1 ECDSA，low-S DER。私钥永远由宿主保管，SDK 只做 32 字节摘要签名。</p>
+    <h3>curl 提交（gzip 与签名需先按上式备好，见第 3 节 SDK）</h3>
+    <pre><button class="copy">复制</button><code>curl -X POST "$BASE_URL/v1/submissions" \
+  -H "Content-Type: application/gzip" \
+  -H "X-BitFSCollector-Pubkey: $PUBKEY_HEX" \
+  -H "X-BitFSCollector-Signature: $SIG_DER_HEX" \
+  -H "X-BitFSCollector-SigVersion: 1" \
+  --data-binary @batch.json.gz</code></pre>
+    <div class="note">重试必须原样重发同一份 gzip 与签名，不要重新压缩；<code class="inline">$BASE_URL</code> 取本页顶部的提交 URL 去掉 <code class="inline">/v1/submissions</code> 的部分。</div>
+  </section>
+
+  <section class="card">
+    <h2>3 · 用 SDK 签名（推荐）</h2>
+    <div class="grid2">
+      <div>
+        <h3>Go</h3>
+        <pre><button class="copy">复制</button><code>import collector "github.com/bsv8/BitFSCollectorProtocol/collector"
+
+canonical, _ := collector.EncodeSubmission(records)
+gzipBytes, _ := collector.GzipJSON(canonical)
+sig, pub, _ := collector.SignGzip(ctx, signer, gzipBytes)
+receipt, _ := collector.Submit(ctx, http.DefaultClient,
+    endpoint, gzipBytes, sig, pub)</code></pre>
+      </div>
+      <div>
+        <h3>TypeScript</h3>
+        <pre><button class="copy">复制</button><code>import * as c from "bitfs-collector-protocol";
+
+const canonical = c.encodeSubmission(records);
+const gzip = c.gzipJson(canonical);
+const digest = c.digestGzip(gzip);
+const { signature, pubkey } = await c.signGzip(signer, gzip);
+const receipt = await c.submit(endpoint, gzip,
+    signature, pubkey, digest);</code></pre>
+      </div>
+    </div>
+    <div class="note">TS 侧摘要已是 32 字节，签名与验签必须关闭预哈希（<code class="inline">prehash: false</code>），否则会被二次哈希导致验签失败。</div>
+  </section>
+
+  <section class="card">
+    <h2>4 · cc 配置</h2>
+    <table>
+      <tr><th>采集地址</th><td>钱包 → 本地文件设置 → 采集上报，填本页顶部的基地址（https 开头也行）</td></tr>
+      <tr><th>启用开关</th><td>同一分区；首次启用会自动补齐已有完整文件</td></tr>
+      <tr><th>提交状态</th><td>同一分区：待提交条数、发送中、最近成功／失败</td></tr>
+      <tr><th>介绍编辑</th><td>桶存储文件 → 编辑：改名或改介绍会触发重新提交</td></tr>
+    </table>
+    <div class="note">只上报自有导入文件；购买／下载所得不上报。队列按 Hash 合并为最新，每小时一次、超 1000 条（即 1001 条）提前提交。</div>
+  </section>
+
+  <section class="card">
+    <h2>5 · cc-cli 配置</h2>
+    <p><code class="inline">~/.km/config.json</code> 的 <code class="inline">server.collector</code>：</p>
+    <pre><button class="copy">复制</button><code>{
+  "server": {
+    "collector": {
+      "enabled": true,
+      "endpoint": "https://你的域名（本页顶部基地址）"
+    }
+  }
+}</code></pre>
+    <p>Web Admin（<code class="inline">/api/collector/status</code>）查看待提交数、最近成功时间与失败原因；介绍经 <code class="inline">POST /api/collector/description</code> <code class="inline">{"seedHash": "…", "description": "…"}</code> 设置。</p>
+    <div class="note">售卖目录下多 data path 的文件全部上报；同 Hash 多路径取最小相对路径为准合并。</div>
+  </section>
+
+  <section class="card">
+    <h2>6 · 归档位置</h2>
+    <p>每次成功提交落两个文件（日期取服务端 UTC）：</p>
+    <pre><code>&lt;归档根&gt;/YYYY/MM/DD/&lt;公钥&gt;-&lt;唯一编号&gt;.gzip
+&lt;归档根&gt;/YYYY/MM/DD/&lt;公钥&gt;-&lt;唯一编号&gt;.sig</code></pre>
+    <p><code class="inline">.sig</code> 是固定封装 <code class="inline">{"digestHex","pubkeyHex","signatureHex","sigVersion"}</code>，可独立核验；重试产生的新归档照常保留，不去重、不覆盖。</p>
+  </section>
+
+  <footer>BitFSCollector · 验签归档，不解压、不建索引 · <span id="host-note"></span></footer>
+</div>
+
+<script>
+(function () {
+  var base = window.location.origin;
+  var submitUrl = base + "/v1/submissions";
+  document.getElementById("submit-url").textContent = submitUrl;
+  document.getElementById("host-note").textContent = "当前访问 " + window.location.host;
+  function wireCopy(btn) {
+    btn.addEventListener("click", function () {
+      var code = btn.parentElement.querySelector("code");
+      var text = code ? code.innerText : "";
+      navigator.clipboard.writeText(text).then(function () {
+        btn.textContent = "已复制";
+        setTimeout(function () { btn.textContent = "复制"; }, 1500);
+      });
+    });
+  }
+  document.querySelectorAll("pre button.copy").forEach(wireCopy);
+  document.getElementById("copy-url").addEventListener("click", function () {
+    var btn = this;
+    navigator.clipboard.writeText(submitUrl).then(function () {
+      btn.textContent = "已复制提交 URL";
+      setTimeout(function () { btn.textContent = "复制提交 URL"; }, 1500);
+    });
+  });
+  // 把示例里的 $BASE_URL 替换成真实基地址，复制即用。
+  document.querySelectorAll("pre code").forEach(function (code) {
+    if (code.innerText.indexOf("$BASE_URL") !== -1) {
+      code.innerText = code.innerText.split("$BASE_URL").join(base);
+    }
+  });
+})();
+</script>
+</body>
+</html>
