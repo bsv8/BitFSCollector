@@ -35,4 +35,17 @@ func TestConsoleServesHTML(t *testing.T) {
 	if notFound.Code != http.StatusNotFound {
 		t.Fatalf("GET /nope = %d", notFound.Code)
 	}
+	// 图标路由：同源 SVG，可被 link 引用。
+	iconRec := httptest.NewRecorder()
+	Handler(iconRec, httptest.NewRequest(http.MethodGet, "/icon.svg", nil))
+	iconRes := iconRec.Result()
+	if iconRes.StatusCode != http.StatusOK {
+		t.Fatalf("GET /icon.svg = %d", iconRes.StatusCode)
+	}
+	if ctype := iconRes.Header.Get("Content-Type"); ctype != "image/svg+xml" {
+		t.Fatalf("icon content-type = %q", ctype)
+	}
+	if body := iconRec.Body.String(); !strings.HasPrefix(strings.TrimSpace(body), "<svg") || !strings.Contains(body, "</svg>") {
+		t.Fatal("icon body is not SVG")
+	}
 }
