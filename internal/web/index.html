@@ -168,14 +168,6 @@ const receipt = await c.submit(endpoint, gzip,
     <div class="note">售卖目录下多 data path 的文件全部上报；同 Hash 多路径取最小相对路径为准合并。</div>
   </section>
 
-  <section class="card">
-    <h2>6 · 归档位置</h2>
-    <p>每次成功提交落两个文件（日期取服务端 UTC）：</p>
-    <pre><code>&lt;归档根&gt;/YYYY/MM/DD/&lt;公钥&gt;-&lt;唯一编号&gt;.gzip
-&lt;归档根&gt;/YYYY/MM/DD/&lt;公钥&gt;-&lt;唯一编号&gt;.sig</code></pre>
-    <p><code class="inline">.sig</code> 是固定封装 <code class="inline">{"digestHex","pubkeyHex","signatureHex","sigVersion"}</code>，可独立核验；重试产生的新归档照常保留，不去重、不覆盖。</p>
-  </section>
-
   <footer>BitFSCollector · 验签归档，不解压、不建索引 · <span id="host-note"></span></footer>
 </div>
 
