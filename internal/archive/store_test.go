@@ -14,6 +14,8 @@ import (
 	"time"
 
 	ec "github.com/bsv-blockchain/go-sdk/primitives/ec"
+	"github.com/bsv8/BitFSCollector/internal/auth"
+	"github.com/bsv8/BitFSCollector/internal/manifest"
 	collector "github.com/bsv8/BitFSCollectorProtocol/collector"
 )
 
@@ -30,6 +32,16 @@ func testSigner(t *testing.T) (*collector.PrivateKeySigner, collector.PublicKey)
 		t.Fatal(err)
 	}
 	return signer, signer.PublicKey()
+}
+
+func newTestManifest(t *testing.T, dir string) *manifest.DB {
+	t.Helper()
+	db, err := manifest.Open(filepath.Join(dir, "manifest.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db
 }
 
 func submit(t *testing.T, url string, gzipBytes, sig []byte, pub collector.PublicKey) (int, map[string]any) {
@@ -73,7 +85,8 @@ func buildSubmission(t *testing.T) (gzipBytes, sig []byte, pub collector.PublicK
 func TestArchiveLayoutAndBytes(t *testing.T) {
 	root := t.TempDir()
 	fixed := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
-	store := &Store{Root: root, MaxBodyBytes: 32 << 20, Now: func() time.Time { return fixed }}
+	db := newTestManifest(t, t.TempDir())
+	store := &Store{Root: root, MaxBodyBytes: 32 << 20, Manifest: db, Now: func() time.Time { return fixed }}
 	server := httptest.NewServer(http.HandlerFunc(store.Handle))
 	defer server.Close()
 	gzipBytes, sig, pub := buildSubmission(t)
@@ -110,6 +123,14 @@ func TestArchiveLayoutAndBytes(t *testing.T) {
 	if body["digestHex"] != doc["digestHex"] || body["pubkeyHex"] != pubHex {
 		t.Fatalf("receipt mismatch %v", body)
 	}
+	// 清单应有一笔待接管。
+	rec, err := db.Get(archiveID)
+	if err != nil {
+		t.Fatalf("manifest missing: %v", err)
+	}
+	if rec.State != "pending" || rec.Sequence != 1 || rec.GzipPath != gzipPath {
+		t.Fatalf("bad manifest row %+v", rec)
+	}
 	// 第二次提交产生不同编号，不覆盖。
 	status2, body2 := submit(t, server.URL, gzipBytes, sig, pub)
 	if status2 != http.StatusOK {
@@ -144,7 +165,8 @@ func TestArchiveLayoutAndBytes(t *testing.T) {
 
 func TestTamperedBodyRejected(t *testing.T) {
 	root := t.TempDir()
-	store := &Store{Root: root, MaxBodyBytes: 32 << 20}
+	db := newTestManifest(t, t.TempDir())
+	store := &Store{Root: root, MaxBodyBytes: 32 << 20, Manifest: db}
 	server := httptest.NewServer(http.HandlerFunc(store.Handle))
 	defer server.Close()
 	gzipBytes, sig, pub := buildSubmission(t)
@@ -164,6 +186,13 @@ func TestTamperedBodyRejected(t *testing.T) {
 	if count != 0 {
 		t.Fatalf("rejected submission entered archive (%d files)", count)
 	}
+	rows, err := db.ListPending(0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("rejected submission entered manifest (%d rows)", len(rows))
+	}
 }
 
 func TestWriteFailureNotSuccess(t *testing.T) {
@@ -172,7 +201,8 @@ func TestWriteFailureNotSuccess(t *testing.T) {
 	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	store := &Store{Root: blocker, MaxBodyBytes: 32 << 20}
+	db := newTestManifest(t, t.TempDir())
+	store := &Store{Root: blocker, MaxBodyBytes: 32 << 20, Manifest: db}
 	server := httptest.NewServer(http.HandlerFunc(store.Handle))
 	defer server.Close()
 	gzipBytes, sig, pub := buildSubmission(t)
@@ -187,12 +217,134 @@ func TestWriteFailureNotSuccess(t *testing.T) {
 
 func TestBodyTooLarge(t *testing.T) {
 	root := t.TempDir()
-	store := &Store{Root: root, MaxBodyBytes: 16}
+	db := newTestManifest(t, t.TempDir())
+	store := &Store{Root: root, MaxBodyBytes: 16, Manifest: db}
 	server := httptest.NewServer(http.HandlerFunc(store.Handle))
 	defer server.Close()
 	gzipBytes, sig, pub := buildSubmission(t)
 	status, _ := submit(t, server.URL, gzipBytes, sig, pub)
 	if status != http.StatusRequestEntityTooLarge {
 		t.Fatalf("oversize must be 413, got %d", status)
+	}
+	rows, err := db.ListPending(0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatal("oversize body entered manifest")
+	}
+}
+
+func TestV2ListDownloadAck(t *testing.T) {
+	root := t.TempDir()
+	fixed := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	db := newTestManifest(t, t.TempDir())
+	store := &Store{Root: root, MaxBodyBytes: 32 << 20, Manifest: db, Now: func() time.Time { return fixed }}
+	v2 := &V2{Manifest: db, Auth: auth.New([]string{"pull-secret"}), MaxDownloadBytes: 32 << 20}
+	mux := http.NewServeMux()
+	mux.HandleFunc(collector.SubmissionsPath, store.Handle)
+	mux.HandleFunc(collector.ArchivesPath, v2.HandleList)
+	mux.HandleFunc(collector.ArchivesPath+"/", v2.HandleArtifact)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	gzipBytes, sig, pub := buildSubmission(t)
+	if status, _ := submit(t, server.URL, gzipBytes, sig, pub); status != http.StatusOK {
+		t.Fatalf("submit status %d", status)
+	}
+	pull := &collector.PullClient{BaseURL: server.URL, Token: "pull-secret", Client: server.Client()}
+	list, err := pull.List(context.Background(), 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Archives) != 1 || list.NextAfter != 1 {
+		t.Fatalf("unexpected list %+v", list)
+	}
+	id := list.Archives[0].ArchiveID
+	got, err := pull.FetchGzip(context.Background(), id)
+	if err != nil || !bytes.Equal(got, gzipBytes) {
+		t.Fatalf("gzip mismatch: %v", err)
+	}
+	sigDoc, err := pull.FetchSig(context.Background(), id)
+	if err != nil || len(sigDoc) == 0 {
+		t.Fatalf("sig fetch failed: %v", err)
+	}
+	ack, err := pull.Ack(context.Background(), id)
+	if err != nil || ack.Repeated {
+		t.Fatalf("first ack must not be repeated: %+v %v", ack, err)
+	}
+	// ack 后文件删除、清单记清理、清单不再列出。
+	rec, err := db.Get(id)
+	if err != nil || rec.State != "cleaned" {
+		t.Fatalf("expected cleaned, got %+v %v", rec, err)
+	}
+	if _, err := os.Stat(rec.GzipPath); !os.IsNotExist(err) {
+		t.Fatal("gzip not deleted after ack")
+	}
+	list2, err := pull.List(context.Background(), 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list2.Archives) != 0 {
+		t.Fatalf("cleaned archive still listed: %+v", list2)
+	}
+	// 重复确认成功。
+	ack2, err := pull.Ack(context.Background(), id)
+	if err != nil || !ack2.Repeated {
+		t.Fatalf("repeat ack must succeed repeated: %+v %v", ack2, err)
+	}
+	// 无 Bearer 拒绝。
+	anon := &collector.PullClient{BaseURL: server.URL, Token: "wrong", Client: server.Client()}
+	if _, err := anon.List(context.Background(), 0, 10); !collector.IsCode(err, collector.CodeUnauthorized) {
+		t.Fatalf("bad bearer must be unauthorized, got %v", err)
+	}
+}
+
+func TestRecoverRelistsCompletePair(t *testing.T) {
+	root := t.TempDir()
+	db := newTestManifest(t, t.TempDir())
+	fixed := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	store := &Store{Root: root, MaxBodyBytes: 32 << 20, Manifest: db, Now: func() time.Time { return fixed }}
+	server := httptest.NewServer(http.HandlerFunc(store.Handle))
+	gzipBytes, sig, pub := buildSubmission(t)
+	if status, _ := submit(t, server.URL, gzipBytes, sig, pub); status != http.StatusOK {
+		t.Fatal("submit failed")
+	}
+	server.Close()
+	rows, err := db.ListPending(0, 100)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("expected 1 pending, got %+v %v", rows, err)
+	}
+	// 模拟崩溃：用空清单库对同一归档根恢复，完整文件对应重新记为待接管。
+	db2, err := manifest.Open(filepath.Join(t.TempDir(), "manifest2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db2.Close()
+	// 留一个临时文件，恢复时应清理。
+	_ = os.WriteFile(filepath.Join(root, "2026", "11", "07", "junk.gzip.tmp"), []byte("x"), 0o644)
+	n, err := Recover(root, db2, 32<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("expected 1 relisted, got %d", n)
+	}
+	rows2, err := db2.ListPending(0, 100)
+	if err != nil || len(rows2) != 1 {
+		t.Fatalf("expected 1 pending after recover, got %+v %v", rows2, err)
+	}
+	// 半份归档（缺 .sig）不进入清单。
+	_ = os.Remove(rows2[0].SigPath)
+	db3, err := manifest.Open(filepath.Join(t.TempDir(), "manifest3.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db3.Close()
+	n, err = Recover(root, db3, 32<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("half archive must not relist, got %d", n)
 	}
 }

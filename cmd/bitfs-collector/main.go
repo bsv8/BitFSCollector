@@ -1,4 +1,4 @@
-// Command bitfs-collector runs the collector receiver: verify + archive.
+// Command bitfs-collector runs the collector receiver: verify + archive + takeover manifest.
 package main
 
 import (
@@ -9,11 +9,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/bsv8/BitFSCollector/internal/archive"
+	"github.com/bsv8/BitFSCollector/internal/auth"
 	"github.com/bsv8/BitFSCollector/internal/config"
+	"github.com/bsv8/BitFSCollector/internal/manifest"
 	"github.com/bsv8/BitFSCollector/internal/web"
 	collector "github.com/bsv8/BitFSCollectorProtocol/collector"
 )
@@ -32,20 +35,48 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	store := &archive.Store{Root: cfg.ArchiveRoot, MaxBodyBytes: cfg.MaxBodyBytes}
+	if err := os.MkdirAll(cfg.ArchiveRoot, 0o755); err != nil {
+		return fmt.Errorf("archive root: %w", err)
+	}
+	db, err := manifest.Open(cfg.ManifestPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if _, err := archive.Recover(cfg.ArchiveRoot, db, cfg.MaxBodyBytes); err != nil {
+		return fmt.Errorf("recover: %w", err)
+	}
+	if n, err := archive.RecoverCleanup(db); err != nil {
+		fmt.Printf("bitfs-collector: cleanup compensation: %d cleaned, first error: %v\n", n, err)
+	} else if n > 0 {
+		fmt.Printf("bitfs-collector: cleanup compensation: %d cleaned\n", n)
+	}
+	store := &archive.Store{Root: cfg.ArchiveRoot, MaxBodyBytes: cfg.MaxBodyBytes, MinFreeBytes: cfg.MinFreeBytes, Manifest: db}
+	v2 := &archive.V2{Manifest: db, Auth: auth.New(cfg.PullTokens), MaxDownloadBytes: cfg.MaxBodyBytes}
 	sem := make(chan struct{}, cfg.MaxConcurrent)
+	withSem := func(h http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-r.Context().Done():
+				return
+			}
+			h(w, r)
+		}
+	}
 	mux := http.NewServeMux()
-	mux.HandleFunc(collector.SubmissionsPath, func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case sem <- struct{}{}:
-			defer func() { <-sem }()
-		case <-r.Context().Done():
+	mux.HandleFunc(collector.SubmissionsPath, withSem(store.Handle))
+	mux.HandleFunc(collector.ArchivesPath, withSem(v2.HandleList))
+	mux.HandleFunc(collector.ArchivesPath+"/", withSem(v2.HandleArtifact))
+	// 内置文档控制台：GET / 返回展示页，不影响提交接口。
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, collector.ArchivesPath) {
+			http.NotFound(w, r)
 			return
 		}
-		store.Handle(w, r)
+		web.Handler(w, r)
 	})
-	// 内置文档控制台：GET / 返回展示页，不影响提交接口。
-	mux.HandleFunc("/", web.Handler)
 	server := &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           mux,
